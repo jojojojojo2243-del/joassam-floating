@@ -35,6 +35,13 @@ class CaptureService : Service() {
     private var ocrBody = false
     private var senderPhone = ""
 
+    /** 제목 줄에서 앞쪽 한글 이름만 남기기: "조숙희고객님 v2그라오행:" → "조숙희고객님" */
+    private fun cleanTitle(raw: String): String {
+        val s = raw.trim().replace(Regex("^[<‹〈←\\s]+"), "")
+        val m = Regex("[가-힣]{2,}(?:\\s?[가-힣]{1,6}){0,2}").find(s) ?: return s
+        return m.value.trim()
+    }
+
     /** 휴대폰 연락처에서 대화방 이름과 같은 사람 찾기 → (연락처 이름, 전화번호) */
     private fun lookupContact(title: String): Pair<String, String>? {
         if (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return null
@@ -54,7 +61,9 @@ class CaptureService : Service() {
                     val num = (c.getString(1) ?: "").replace(Regex("[^0-9]"), "")
                     if (name.length < 2 || num.length < 9) continue
                     // 정확히 같거나, 화면 글자 인식으로 앞에 1~2글자가 더 붙은 경우
-                    val ok = name == t || (t.endsWith(name) && t.length - name.length <= 2)
+                    val rest = if (t.startsWith(name)) t.substring(name.length) else null
+                    val ok = name == t || (t.endsWith(name) && t.length - name.length <= 2) ||
+                        (rest != null && Regex("^(고객님|고객|님)?$").matches(rest))
                     if (ok && name.length > bestLen) { bestLen = name.length; best = Pair(c.getString(0) ?: name, num) }
                 }
             }
@@ -204,7 +213,7 @@ class CaptureService : Service() {
             // 제목 앞의 동그란 프로필 글자(예: "김")는 빼기
             val els = line.elements
             var s = if (els.size >= 2 && els[0].text.trim().length == 1) els.drop(1).joinToString(" ") { it.text } else line.text
-            s = s.trim()
+            s = cleanTitle(s)
             s = s.replace(Regex("^[<‹〈←\\s]+"), "").replace(Regex("[∨˅⌄vV>›〉\\s]+$"), "").trim()
             if (s.length < 2 || s.length > 20) continue
             if (!Regex("[가-힣]").containsMatchIn(s)) continue
