@@ -30,12 +30,7 @@ class CaptureActivity : Activity() {
         if (!hasFocus || asked) return
         asked = true
         clip = readClipboard()
-        if (clip.isBlank()) {
-            Toast.makeText(this, "먼저 주문 문자를 길게 눌러 '복사'해 주세요", Toast.LENGTH_LONG).show()
-            BubbleService.instance?.setVisible(true)
-            finish()
-            return
-        }
+        // 복사한 내용이 주문 문자가 아니어도(예: 예전에 복사한 링크) 화면 글자를 읽어서 진행
         val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
         startActivityForResult(mpm.createScreenCaptureIntent(), REQ)
@@ -62,7 +57,11 @@ class CaptureActivity : Activity() {
         } else {
             // 화면 공유를 취소하면 주문자 없이 문자만 넘김
             BubbleService.instance?.setVisible(true)
-            Common.openOrderApp(this, clip, "")
+            if (clip.isBlank()) {
+                Toast.makeText(this, "주문 문자를 길게 눌러 '복사'한 뒤 다시 눌러주세요", Toast.LENGTH_LONG).show()
+            } else {
+                Common.openOrderApp(this, clip, "")
+            }
         }
         finish()
         overridePendingTransition(0, 0)

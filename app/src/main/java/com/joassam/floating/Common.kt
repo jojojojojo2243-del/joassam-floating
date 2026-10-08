@@ -38,8 +38,9 @@ object Common {
     }
 
     /** 주문관리 앱(PWA) 열기: 복사한 문자와 대화방 이름(주문자)을 넘김 */
-    fun openOrderApp(ctx: Context, text: String, sender: String) {
+    fun openOrderApp(ctx: Context, text: String, sender: String, fromOcr: Boolean = false) {
         val url = baseUrl(ctx) + "/?from=float" +
+            (if (fromOcr) "&src=ocr" else "") +
             "&text=" + Uri.encode(text) +
             (if (sender.isNotBlank()) "&sender=" + Uri.encode(sender) else "")
         val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))

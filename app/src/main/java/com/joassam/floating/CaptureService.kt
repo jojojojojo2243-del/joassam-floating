@@ -32,6 +32,7 @@ class CaptureService : Service() {
     private var reader: ImageReader? = null
     private var finished = false
     private var clip = ""
+    private var ocrBody = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -61,8 +62,8 @@ class CaptureService : Service() {
             }, handler)
             // 투명 화면이 닫히고 채팅 화면이 다시 보일 때까지 잠깐 기다림
             handler.postDelayed({ capture(mp) }, 700)
-            // 3초 안에 못 찍으면 주문자 없이 진행
-            handler.postDelayed({ finish("") }, 4000)
+            // 8초 안에 못 끝내면 주문자 없이 진행
+            handler.postDelayed({ finish("") }, 8000)
         } catch (e: Exception) {
             finish("")
         }
@@ -120,37 +121,60 @@ class CaptureService : Service() {
         }
     }
 
-    /** 화면 위쪽(채팅방 제목 영역)만 잘라서 한글 인식 */
+    /** 화면 전체를 한글 인식: 위쪽에서 채팅방 제목(주문자), 가운데에서 문자 내용 */
     private fun recognize(bmp: Bitmap, w: Int, h: Int) {
         try {
-            val top = (h * 0.025).toInt()
-            val height = (h * 0.14).toInt()
-            val crop = Bitmap.createBitmap(bmp, 0, top, w, height)
             val recognizer = TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
-            recognizer.process(InputImage.fromBitmap(crop, 0))
-                .addOnSuccessListener { t -> finish(pickTitle(t)) }
+            recognizer.process(InputImage.fromBitmap(bmp, 0))
+                .addOnSuccessListener { t -> finishWith(t, h) }
                 .addOnFailureListener { finish("") }
         } catch (e: Exception) {
             finish("")
         }
     }
 
+    private val phoneRe = Regex("01[016789][-\\s.]?\\d{3,4}[-\\s.]?\\d{4}")
+
+    private fun finishWith(t: Text, h: Int) {
+        val top = (h * 0.025).toInt()
+        val titleBottom = (h * 0.14).toInt()
+        val bodyBottom = (h * 0.88).toInt()
+        val titleLines = ArrayList<Text.Line>()
+        val bodyLines = ArrayList<Pair<Int, String>>()
+        for (block in t.textBlocks) for (line in block.lines) {
+            val box = line.boundingBox ?: continue
+            val cy = box.centerY()
+            if (cy in top until titleBottom) titleLines.add(line)
+            else if (cy in titleBottom until bodyBottom) bodyLines.add(Pair(box.top, line.text.trim()))
+        }
+        val sender = pickTitle(titleLines)
+        // 복사한 내용에 전화번호가 있으면 그대로, 없으면 화면에서 읽은 글자 사용
+        if (phoneRe.containsMatchIn(clip) || bodyLines.isEmpty()) {
+            finish(sender)
+        } else {
+            bodyLines.sortBy { it.first }
+            val body = bodyLines.map { it.second }
+                .filter { it.isNotBlank() && !Regex("^(오전|오후)\\s*\\d{1,2}:\\d{2}$").matches(it) }
+                .joinToString("\n")
+            if (phoneRe.containsMatchIn(body)) { clip = body; ocrBody = true }
+            finish(sender)
+        }
+    }
+
     /** 인식된 줄 중에서 '채팅방 제목'으로 보이는 줄 고르기: 한글이 있고, 시간·배터리 같은 게 아니고, 글씨가 가장 큰 줄 */
-    private fun pickTitle(t: Text): String {
+    private fun pickTitle(lines: List<Text.Line>): String {
         var best = ""
         var bestH = 0
-        for (block in t.textBlocks) {
-            for (line in block.lines) {
-                var s = line.text.trim()
-                s = s.replace(Regex("^[<‹〈←\\s]+"), "").replace(Regex("[∨˅⌄vV>›〉\\s]+$"), "").trim()
-                if (s.length < 2 || s.length > 20) continue
-                if (!Regex("[가-힣]").containsMatchIn(s)) continue
-                if (Regex("^\\d{1,2}:\\d{2}").containsMatchIn(s)) continue
-                if (Regex("(오전|오후)\\s*\\d").containsMatchIn(s)) continue
-                if (Regex("^(검색|메시지|채팅|대화|전화|통화|입력|보내기)$").matches(s)) continue
-                val hgt = line.boundingBox?.height() ?: 0
-                if (hgt > bestH) { bestH = hgt; best = s }
-            }
+        for (line in lines) {
+            var s = line.text.trim()
+            s = s.replace(Regex("^[<‹〈←\\s]+"), "").replace(Regex("[∨˅⌄vV>›〉\\s]+$"), "").trim()
+            if (s.length < 2 || s.length > 20) continue
+            if (!Regex("[가-힣]").containsMatchIn(s)) continue
+            if (Regex("^\\d{1,2}:\\d{2}").containsMatchIn(s)) continue
+            if (Regex("(오전|오후)\\s*\\d").containsMatchIn(s)) continue
+            if (Regex("^(검색|메시지|채팅|대화|전화|통화|입력|보내기)$").matches(s)) continue
+            val hgt = line.boundingBox?.height() ?: 0
+            if (hgt > bestH) { bestH = hgt; best = s }
         }
         return best
     }
@@ -169,7 +193,11 @@ class CaptureService : Service() {
         finished = true
         cleanup()
         BubbleService.instance?.setVisible(true)
-        try { Common.openOrderApp(this, clip, sender) } catch (_: Exception) {}
+        if (clip.isBlank()) {
+            android.widget.Toast.makeText(this, "주문 문자를 읽지 못했어요. 문자를 길게 눌러 '복사'한 뒤 다시 눌러주세요", android.widget.Toast.LENGTH_LONG).show()
+        } else {
+            try { Common.openOrderApp(this, clip, sender, ocrBody) } catch (_: Exception) {}
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
