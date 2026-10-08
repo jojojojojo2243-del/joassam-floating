@@ -33,6 +33,34 @@ class CaptureService : Service() {
     private var finished = false
     private var clip = ""
     private var ocrBody = false
+    private var senderPhone = ""
+
+    /** 휴대폰 연락처에서 대화방 이름과 같은 사람 찾기 → (연락처 이름, 전화번호) */
+    private fun lookupContact(title: String): Pair<String, String>? {
+        if (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return null
+        val t = title.replace(Regex("\\s+"), "")
+        var best: Pair<String, String>? = null
+        var bestLen = 0
+        try {
+            val cr = contentResolver.query(
+                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                    android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER),
+                null, null, null
+            ) ?: return null
+            cr.use { c ->
+                while (c.moveToNext()) {
+                    val name = (c.getString(0) ?: "").replace(Regex("\\s+"), "")
+                    val num = (c.getString(1) ?: "").replace(Regex("[^0-9]"), "")
+                    if (name.length < 2 || num.length < 9) continue
+                    // 정확히 같거나, 화면 글자 인식으로 앞에 1~2글자가 더 붙은 경우
+                    val ok = name == t || (t.endsWith(name) && t.length - name.length <= 2)
+                    if (ok && name.length > bestLen) { bestLen = name.length; best = Pair(c.getString(0) ?: name, num) }
+                }
+            }
+        } catch (_: Exception) {}
+        return best
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -147,7 +175,14 @@ class CaptureService : Service() {
             if (cy in top until titleBottom) titleLines.add(line)
             else if (cy in titleBottom until bodyBottom) bodyLines.add(Pair(box.top, line.text.trim()))
         }
-        val sender = pickTitle(titleLines)
+        var sender = pickTitle(titleLines)
+        // 대화방 제목이 전화번호인 경우(저장 안 된 번호)
+        if (sender.isBlank()) {
+            for (l in titleLines) { val m = phoneRe.find(l.text); if (m != null) { senderPhone = m.value.replace(Regex("[^0-9]"), ""); break } }
+        } else {
+            val hit = lookupContact(sender)
+            if (hit != null) { sender = hit.first; senderPhone = hit.second }
+        }
         // 복사한 내용에 전화번호가 있으면 그대로, 없으면 화면에서 읽은 글자 사용
         if (phoneRe.containsMatchIn(clip) || bodyLines.isEmpty()) {
             finish(sender)
@@ -166,7 +201,10 @@ class CaptureService : Service() {
         var best = ""
         var bestH = 0
         for (line in lines) {
-            var s = line.text.trim()
+            // 제목 앞의 동그란 프로필 글자(예: "김")는 빼기
+            val els = line.elements
+            var s = if (els.size >= 2 && els[0].text.trim().length == 1) els.drop(1).joinToString(" ") { it.text } else line.text
+            s = s.trim()
             s = s.replace(Regex("^[<‹〈←\\s]+"), "").replace(Regex("[∨˅⌄vV>›〉\\s]+$"), "").trim()
             if (s.length < 2 || s.length > 20) continue
             if (!Regex("[가-힣]").containsMatchIn(s)) continue
@@ -196,7 +234,7 @@ class CaptureService : Service() {
         if (clip.isBlank()) {
             android.widget.Toast.makeText(this, "주문 문자를 읽지 못했어요. 문자를 길게 눌러 '복사'한 뒤 다시 눌러주세요", android.widget.Toast.LENGTH_LONG).show()
         } else {
-            try { Common.openOrderApp(this, clip, sender, ocrBody) } catch (_: Exception) {}
+            try { Common.openOrderApp(this, clip, sender, ocrBody, senderPhone) } catch (_: Exception) {}
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

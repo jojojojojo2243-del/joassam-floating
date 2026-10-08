@@ -34,6 +34,11 @@ class MainActivity : Activity() {
         handleDeepLink(intent)
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (::status.isInitialized) refreshStatus()
+    }
+
     override fun onResume() {
         super.onResume()
         if (::status.isInitialized) refreshStatus()
@@ -86,7 +91,7 @@ class MainActivity : Activity() {
             "2. 주문관리 앱에서 + 버튼을 누르면 플로팅 버튼이 떠요\n" +
             "3. 문자나 카톡에서 주문 문자를 길게 눌러 '복사'\n" +
             "4. 플로팅 [등록] 버튼 → 화면 공유에서 그 채팅 앱 선택\n" +
-            "5. 주문자(대화방 이름)와 문자가 주문관리 앱으로 자동 입력돼요"
+            "5. 주문자(대화방 이름·연락처 번호)와 문자가 주문관리 앱으로 자동 입력돼요"
         desc.textSize = 14f
         desc.setTextColor(Color.parseColor("#5F5E5A"))
         desc.setPadding(0, 24, 0, 8)
@@ -106,6 +111,9 @@ class MainActivity : Activity() {
             } else {
                 Toast.makeText(this, "이 휴대폰은 따로 허용할 필요가 없어요", Toast.LENGTH_SHORT).show()
             }
+        })
+        root.addView(btn("3. 연락처 허용 (주문자 전화번호 자동)", Color.parseColor("#6B4FA0")) {
+            requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 11)
         })
         root.addView(btn("플로팅 버튼 켜기", Color.parseColor("#2F6F4E")) {
             if (!Settings.canDrawOverlays(this)) {
@@ -142,8 +150,10 @@ class MainActivity : Activity() {
         val overlay = Settings.canDrawOverlays(this)
         val notif = Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val contacts = checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
         status.text = "다른 앱 위에 표시: " + (if (overlay) "허용됨 ✓" else "필요 ✗") +
-            "\n알림: " + (if (notif) "허용됨 ✓" else "필요 ✗")
+            "\n알림: " + (if (notif) "허용됨 ✓" else "필요 ✗") +
+            "\n연락처: " + (if (contacts) "허용됨 ✓" else "선택 (허용하면 주문자 번호 자동 입력)")
         status.setTextColor(if (overlay && notif) Color.parseColor("#2F6F4E") else Color.parseColor("#C0392B"))
         status.gravity = Gravity.START
     }
