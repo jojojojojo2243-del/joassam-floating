@@ -1,0 +1,42 @@
+name: APK 자동 빌드
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+
+      - name: APK 만들기
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: 이름 정리
+        run: cp app/build/outputs/apk/debug/app-debug.apk joassam-floating.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: joassam-floating-apk
+          path: joassam-floating.apk
+
+      - name: Releases에 올리기
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: 조아저씨쌈 플로팅 (빌드 ${{ github.run_number }})
+          files: joassam-floating.apk
