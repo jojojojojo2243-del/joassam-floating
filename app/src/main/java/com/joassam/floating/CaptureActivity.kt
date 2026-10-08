@@ -56,11 +56,12 @@ class CaptureActivity : Activity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(s) else startService(s)
         } else {
             // 화면 공유를 취소하면 주문자 없이 문자만 넘김
-            BubbleService.instance?.setVisible(true)
             if (clip.isBlank()) {
+                BubbleService.instance?.setVisible(true)
                 Toast.makeText(this, "주문 문자를 길게 눌러 '복사'한 뒤 다시 눌러주세요", Toast.LENGTH_LONG).show()
             } else {
                 Common.openOrderApp(this, clip, "")
+                BubbleService.instance?.stopSelf()
             }
         }
         finish()

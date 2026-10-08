@@ -230,11 +230,13 @@ class CaptureService : Service() {
         if (finished) return
         finished = true
         cleanup()
-        BubbleService.instance?.setVisible(true)
         if (clip.isBlank()) {
+            BubbleService.instance?.setVisible(true)
             android.widget.Toast.makeText(this, "주문 문자를 읽지 못했어요. 문자를 길게 눌러 '복사'한 뒤 다시 눌러주세요", android.widget.Toast.LENGTH_LONG).show()
         } else {
             try { Common.openOrderApp(this, clip, sender, ocrBody, senderPhone) } catch (_: Exception) {}
+            // 등록을 넘겼으면 플로팅 버튼은 닫기 (다음 주문 때 주문관리 앱의 + 로 다시 켜짐)
+            BubbleService.instance?.stopSelf()
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

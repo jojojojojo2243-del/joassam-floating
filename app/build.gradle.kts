@@ -11,8 +11,8 @@ android {
         applicationId = "com.joassam.floating"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     // 항상 같은 서명 → 새 버전을 덮어서 설치 가능 (매번 지우고 다시 깔 필요 없음)
