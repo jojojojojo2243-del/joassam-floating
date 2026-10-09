@@ -38,14 +38,20 @@ class CaptureService : Service() {
     /** 제목 줄에서 앞쪽 한글 이름만 남기기: "조숙희고객님 v2그라오행:" → "조숙희고객님" */
     private fun cleanTitle(raw: String): String {
         val s = raw.trim().replace(Regex("^[<‹〈←\\s]+"), "")
-        val m = Regex("[가-힣]{2,}(?:\\s?[가-힣]{1,6}){0,2}").find(s) ?: return s
+        val m = Regex("[가-힣]{2,}(?:(?:\\s*[\\-_·]\\s*|\\s?)[가-힣]{1,6}){0,3}").find(s) ?: return s
         return m.value.trim()
     }
 
     /** 휴대폰 연락처에서 대화방 이름과 같은 사람 찾기 → (연락처 이름, 전화번호) */
     private fun lookupContact(title: String): Pair<String, String>? {
         if (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return null
-        val t = title.replace(Regex("\\s+"), "")
+        // 대화방 이름이 "조아쌈-유태수고객님"처럼 가게 이름과 함께 오면 조각마다, 그리고 고객님/고객/님을 뗀 이름으로도 찾는다
+        val whole = title.replace(Regex("\\s+"), "")
+        val cands = LinkedHashSet<String>()
+        cands.add(whole)
+        whole.split(Regex("[\\-_·]")).forEach { seg ->
+            if (seg.length >= 2) { cands.add(seg); cands.add(seg.replace(Regex("(고객님|고객|님)$"), "")) }
+        }
         var best: Pair<String, String>? = null
         var bestLen = 0
         try {
@@ -61,9 +67,13 @@ class CaptureService : Service() {
                     val num = (c.getString(1) ?: "").replace(Regex("[^0-9]"), "")
                     if (name.length < 2 || num.length < 9) continue
                     // 정확히 같거나, 화면 글자 인식으로 앞에 1~2글자가 더 붙은 경우
-                    val rest = if (t.startsWith(name)) t.substring(name.length) else null
-                    val ok = name == t || (t.endsWith(name) && t.length - name.length <= 2) ||
-                        (rest != null && Regex("^(고객님|고객|님)?$").matches(rest))
+                    var ok = false
+                    for (t in cands) {
+                        if (t.length < 2) continue
+                        val rest = if (t.startsWith(name)) t.substring(name.length) else null
+                        if (name == t || (t.endsWith(name) && t.length - name.length <= 2) ||
+                            (rest != null && Regex("^(고객님|고객|님)?$").matches(rest))) { ok = true; break }
+                    }
                     if (ok && name.length > bestLen) { bestLen = name.length; best = Pair(c.getString(0) ?: name, num) }
                 }
             }
