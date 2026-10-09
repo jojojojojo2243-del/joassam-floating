@@ -30,6 +30,7 @@ object Updater {
     /** 받아 둔 새 버전 번호 (없으면 0) */
     fun readyCode(ctx: Context): Long {
         val c = prefs(ctx).getLong("ready_code", 0)
+        if (c == prefs(ctx).getLong("fail_code", -1)) return 0
         return if (c > currentCode(ctx) && apk(ctx).exists() && apk(ctx).length() > 100000) c else 0
     }
 
@@ -52,24 +53,44 @@ object Updater {
                     if (a.optString("name").endsWith(".apk")) { url = a.optString("browser_download_url"); break }
                 }
                 val mine = currentCode(app)
-                if (latest <= mine || url.isEmpty()) {
+                if (url.isEmpty()) {
+                    msg = "내려받을 파일이 없어요"
+                } else if (p.getString("seen_tag", "") == tag && readyCode(app) == 0L) {
                     msg = "최신 버전이에요 (빌드 $mine)"
-                    apk(app).delete(); p.edit().remove("ready_code").apply()
-                } else if (readyCode(app) == latest) {
-                    msg = "새 버전(빌드 $latest)을 받아 두었어요"
+                } else if (readyCode(app) > 0L && p.getString("seen_tag", "") == tag) {
+                    msg = "새 버전(빌드 ${readyCode(app)})을 받아 두었어요"
                 } else {
                     val tmp = File(app.cacheDir, "update.part")
                     download(url, tmp)
-                    apk(app).delete()
-                    tmp.renameTo(apk(app))
-                    p.edit().putLong("ready_code", latest).apply()
-                    msg = "새 버전(빌드 $latest)을 받았어요"
+                    // 파일 안에 적힌 진짜 버전 번호로 비교 (이름표가 아니라) → 같은 버전을 계속 설치하려는 반복 방지
+                    val info = app.packageManager.getPackageArchiveInfo(tmp.absolutePath, 0)
+                    val code = if (info == null) 0L else if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+                    p.edit().putString("seen_tag", tag).apply()
+                    if (code > mine) {
+                        apk(app).delete()
+                        tmp.renameTo(apk(app))
+                        p.edit().putLong("ready_code", code).apply()
+                        msg = "새 버전(빌드 $code)을 받았어요"
+                    } else {
+                        tmp.delete(); apk(app).delete()
+                        p.edit().remove("ready_code").apply()
+                        msg = "최신 버전이에요 (빌드 $mine)"
+                    }
                 }
             } catch (e: Exception) {
                 msg = "업데이트 확인 실패: " + (e.message ?: "인터넷을 확인해 주세요")
             }
             onDone?.invoke(msg)
         }.start()
+    }
+
+    /** 방금(30분 안에) 설치를 시도했으면 true → 같은 확인 창이 계속 뜨지 않게 */
+    fun triedRecently(ctx: Context): Boolean =
+        System.currentTimeMillis() - prefs(ctx).getLong("last_install_try", 0) < 30 * 60 * 1000
+
+    fun markFailed(ctx: Context) {
+        val p = prefs(ctx)
+        p.edit().putLong("fail_code", p.getLong("ready_code", 0)).apply()
     }
 
     fun canInstall(ctx: Context): Boolean =
@@ -94,6 +115,7 @@ object Updater {
                 val pending = PendingIntent.getBroadcast(app, id, Intent(app, UpdateReceiver::class.java), flags)
                 s.commit(pending.intentSender)
             }
+            prefs(app).edit().putLong("last_install_try", System.currentTimeMillis()).apply()
             true
         } catch (e: Exception) { false }
     }
@@ -121,6 +143,11 @@ object Updater {
 class UpdateReceiver : android.content.BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999)
+        if (status != PackageInstaller.STATUS_PENDING_USER_ACTION && status != PackageInstaller.STATUS_SUCCESS) {
+            val why = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: ""
+            if (status != PackageInstaller.STATUS_FAILURE_ABORTED) Updater.markFailed(ctx)
+            android.widget.Toast.makeText(ctx, "업데이트를 못 했어요 (" + why.take(60) + "). 깃허브 Releases에서 APK를 직접 받아 설치해 주세요", android.widget.Toast.LENGTH_LONG).show()
+        }
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             val confirm: Intent? = if (Build.VERSION.SDK_INT >= 33)
                 intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)

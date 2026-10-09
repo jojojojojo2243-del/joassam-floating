@@ -12,7 +12,9 @@ android {
         minSdk = 26
         targetSdk = 34
         // 자동 빌드 번호(깃허브 Actions 실행 번호)를 버전으로 사용 → 새 빌드가 항상 더 높은 버전이라 자동 업데이트가 가능
-        val build = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 6
+        val build = (project.findProperty("buildNumber") as String?)?.toIntOrNull()
+            ?: System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+            ?: 6
         versionCode = build
         versionName = "1.6 (빌드 $build)"
     }

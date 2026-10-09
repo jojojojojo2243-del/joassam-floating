@@ -26,7 +26,7 @@ class MainActivity : Activity() {
         // 주문관리 앱의 + 버튼에서 왔고 권한이 있으면: 플로팅 켜고 바로 홈 화면으로
         if (handleDeepLink(intent)) return
         // 앱을 직접 열었을 때: 받아 둔 새 버전이 있으면 바로 설치, 없으면 조용히 확인
-        if (Updater.installIfReady(this)) {
+        if (!Updater.triedRecently(this) && Updater.installIfReady(this)) {
             Toast.makeText(this, "새 버전으로 업데이트 중이에요", Toast.LENGTH_LONG).show()
         } else {
             Updater.checkAndDownload(this, false)
@@ -54,7 +54,7 @@ class MainActivity : Activity() {
         if (i?.data?.scheme != "joassamfloat") return false
         if (!Settings.canDrawOverlays(this)) return false
         // 새 버전을 이미 받아 두었으면 먼저 설치 (설치되면 앱이 새로 시작되니 + 를 한 번 더 눌러 주세요)
-        if (Updater.installIfReady(this)) {
+        if (!Updater.triedRecently(this) && Updater.installIfReady(this)) {
             Toast.makeText(this, "새 버전으로 업데이트 중이에요. 잠시 후 주문관리 앱에서 + 를 다시 눌러 주세요", Toast.LENGTH_LONG).show()
             finish()
             return true
