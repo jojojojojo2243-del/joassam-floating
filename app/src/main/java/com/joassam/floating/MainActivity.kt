@@ -25,6 +25,12 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         // 주문관리 앱의 + 버튼에서 왔고 권한이 있으면: 플로팅 켜고 바로 홈 화면으로
         if (handleDeepLink(intent)) return
+        // 앱을 직접 열었을 때: 받아 둔 새 버전이 있으면 바로 설치, 없으면 조용히 확인
+        if (Updater.installIfReady(this)) {
+            Toast.makeText(this, "새 버전으로 업데이트 중이에요", Toast.LENGTH_LONG).show()
+        } else {
+            Updater.checkAndDownload(this, false)
+        }
         buildUi()
     }
 
@@ -47,6 +53,13 @@ class MainActivity : Activity() {
     private fun handleDeepLink(i: Intent?): Boolean {
         if (i?.data?.scheme != "joassamfloat") return false
         if (!Settings.canDrawOverlays(this)) return false
+        // 새 버전을 이미 받아 두었으면 먼저 설치 (설치되면 앱이 새로 시작되니 + 를 한 번 더 눌러 주세요)
+        if (Updater.installIfReady(this)) {
+            Toast.makeText(this, "새 버전으로 업데이트 중이에요. 잠시 후 주문관리 앱에서 + 를 다시 눌러 주세요", Toast.LENGTH_LONG).show()
+            finish()
+            return true
+        }
+        Updater.checkAndDownload(this, false)
         startBubble()
         val home = Intent(Intent.ACTION_MAIN)
         home.addCategory(Intent.CATEGORY_HOME)
@@ -115,6 +128,9 @@ class MainActivity : Activity() {
         root.addView(btn("3. 연락처 허용 (주문자 전화번호 자동)", Color.parseColor("#6B4FA0")) {
             requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 11)
         })
+        root.addView(btn("4. 자동 업데이트 허용 (이 앱에서 설치)", Color.parseColor("#2F6F4E")) {
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+        })
         root.addView(btn("플로팅 버튼 켜기", Color.parseColor("#2F6F4E")) {
             if (!Settings.canDrawOverlays(this)) {
                 Toast.makeText(this, "먼저 '다른 앱 위에 표시'를 허용해주세요", Toast.LENGTH_LONG).show()
@@ -125,6 +141,28 @@ class MainActivity : Activity() {
         })
         root.addView(btn("플로팅 버튼 끄기", Color.parseColor("#5F5E5A")) {
             stopService(Intent(this, BubbleService::class.java))
+        })
+
+        val updText = TextView(this)
+        updText.textSize = 14f
+        updText.setPadding(0, 40, 0, 0)
+        updText.text = "현재 버전: 빌드 " + Updater.currentCode(this) + "  (새 버전은 자동으로 확인해요)"
+        root.addView(updText)
+        root.addView(btn("지금 업데이트 확인", Color.parseColor("#185FA5")) {
+            if (!Updater.canInstall(this)) {
+                Toast.makeText(this, "'이 앱에서 설치 허용'을 켜 주세요", Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            } else {
+                updText.text = "확인 중…"
+                Updater.checkAndDownload(this, true) { m ->
+                    runOnUiThread {
+                        updText.text = m
+                        if (Updater.readyCode(this) > 0) {
+                            if (Updater.installIfReady(this)) updText.text = m + "\n설치를 시작했어요. 확인 창이 뜨면 '설치'를 눌러 주세요"
+                        }
+                    }
+                }
+            }
         })
 
         val urlLabel = TextView(this)
@@ -153,7 +191,8 @@ class MainActivity : Activity() {
         val contacts = checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
         status.text = "다른 앱 위에 표시: " + (if (overlay) "허용됨 ✓" else "필요 ✗") +
             "\n알림: " + (if (notif) "허용됨 ✓" else "필요 ✗") +
-            "\n연락처: " + (if (contacts) "허용됨 ✓" else "선택 (허용하면 주문자 번호 자동 입력)")
+            "\n연락처: " + (if (contacts) "허용됨 ✓" else "선택 (허용하면 주문자 번호 자동 입력)") +
+            "\n자동 업데이트: " + (if (Updater.canInstall(this)) "허용됨 ✓" else "선택 (허용하면 새 버전이 저절로 설치돼요)")
         status.setTextColor(if (overlay && notif) Color.parseColor("#2F6F4E") else Color.parseColor("#C0392B"))
         status.gravity = Gravity.START
     }

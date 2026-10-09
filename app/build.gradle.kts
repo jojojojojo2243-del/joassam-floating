@@ -11,8 +11,10 @@ android {
         applicationId = "com.joassam.floating"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.5"
+        // 자동 빌드 번호(깃허브 Actions 실행 번호)를 버전으로 사용 → 새 빌드가 항상 더 높은 버전이라 자동 업데이트가 가능
+        val build = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 6
+        versionCode = build
+        versionName = "1.6 (빌드 $build)"
     }
 
     // 항상 같은 서명 → 새 버전을 덮어서 설치 가능 (매번 지우고 다시 깔 필요 없음)
