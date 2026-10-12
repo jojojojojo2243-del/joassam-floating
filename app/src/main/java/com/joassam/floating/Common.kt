@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 
@@ -45,7 +46,25 @@ object Common {
             "&text=" + Uri.encode(text) +
             (if (sender.isNotBlank()) "&sender=" + Uri.encode(sender) else "")
         val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        i.addCategory(Intent.CATEGORY_BROWSABLE)
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        ctx.startActivity(i)
+        // 폰에 설치된 '조아저씨쌈' 앱(홈 화면 앱)이 있으면 브라우저가 아니라 그 앱으로 바로 열기 → 로그인이 그대로 유지됨
+        try {
+            val found = ctx.packageManager.queryIntentActivities(i, PackageManager.MATCH_ALL)
+            for (r in found) {
+                val pkg = r.activityInfo.packageName
+                if (pkg.startsWith("org.chromium.webapk")) {
+                    i.setPackage(pkg)
+                    break
+                }
+            }
+        } catch (e: Exception) {
+        }
+        try {
+            ctx.startActivity(i)
+        } catch (e: Exception) {
+            i.setPackage(null)
+            ctx.startActivity(i)
+        }
     }
 }
