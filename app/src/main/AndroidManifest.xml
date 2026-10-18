@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 배송 알림: 정해진 시간(9·12·16시)에 정확히 깨우기 + 재부팅 뒤 다시 예약 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
         <queries>
         <intent>
@@ -63,6 +67,15 @@
         <receiver
             android:name=".UpdateReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".DeliveryReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".CaptureService"

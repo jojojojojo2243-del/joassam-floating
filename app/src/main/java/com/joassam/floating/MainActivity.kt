@@ -23,6 +23,8 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 배송 알림(9·12·16시) 알람 예약 — 앱을 열 때마다 다시 맞춰 둠
+        try { DeliveryCheck.schedule(this) } catch (e: Exception) {}
         // 주문관리 앱의 + 버튼에서 왔고 권한이 있으면: 플로팅 켜고 바로 홈 화면으로
         if (handleDeepLink(intent)) return
         // 앱을 직접 열었을 때: 받아 둔 새 버전이 있으면 바로 설치, 없으면 조용히 확인
@@ -142,6 +144,46 @@ class MainActivity : Activity() {
         root.addView(btn("플로팅 버튼 끄기", Color.parseColor("#5F5E5A")) {
             stopService(Intent(this, BubbleService::class.java))
         })
+
+        // ---------- 배송 알림 ----------
+        val dlvTitle = TextView(this)
+        dlvTitle.text = "📦 배송 알림 (앱을 닫아 둬도)"
+        dlvTitle.textSize = 18f
+        dlvTitle.setTextColor(Color.parseColor("#1B2430"))
+        dlvTitle.setPadding(0, 40, 0, 0)
+        root.addView(dlvTitle)
+        val dlvDesc = TextView(this)
+        dlvDesc.text = "우체국 택배를 보낸 다음 날 12시·16시에 배송중/배송완료를 알려 주고,\n그다음 날 9시에 아직 도착 안 된 것만 다시 알려 줘요.\n(주문관리 앱에 송장번호가 들어간 '발송완료' 주문 기준)"
+        dlvDesc.textSize = 13f
+        dlvDesc.setTextColor(Color.parseColor("#5F5E5A"))
+        dlvDesc.setPadding(0, 8, 0, 0)
+        root.addView(dlvDesc)
+        val dlvStatus = TextView(this)
+        dlvStatus.textSize = 13f
+        dlvStatus.setPadding(0, 12, 0, 0)
+        fun showDlv() {
+            dlvStatus.text = "다음 알림: " + DeliveryCheck.nextText(this) +
+                (if (DeliveryCheck.canExact(this)) "  (정확한 시간 ✓)" else "  (정확한 시간 허용 필요 ✗)") +
+                (if (DeliveryCheck.lastText(this).isNotEmpty()) "\n최근 확인: " + DeliveryCheck.lastText(this) else "")
+        }
+        showDlv()
+        root.addView(dlvStatus)
+        root.addView(btn("지금 배송 확인해 보기 (시험 알림)", Color.parseColor("#2F6F4E")) {
+            dlvStatus.text = "확인 중…"
+            Thread {
+                val r = try { DeliveryCheck.run(this, -1, true) } catch (e: Exception) { "확인 실패: " + e.message }
+                runOnUiThread { showDlv(); Toast.makeText(this, r.lineSequence().firstOrNull() ?: r, Toast.LENGTH_LONG).show() }
+            }.start()
+        })
+        if (Build.VERSION.SDK_INT >= 31) {
+            root.addView(btn("정확한 시간 알림 허용", Color.parseColor("#185FA5")) {
+                try {
+                    startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName")))
+                } catch (e: Exception) {
+                    Toast.makeText(this, "설정 → 앱 → 조아저씨쌈 플로팅 → 알람 및 리마인더를 허용해 주세요", Toast.LENGTH_LONG).show()
+                }
+            })
+        }
 
         val updText = TextView(this)
         updText.textSize = 14f
