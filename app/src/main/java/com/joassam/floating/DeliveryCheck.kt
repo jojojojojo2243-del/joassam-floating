@@ -16,6 +16,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Calendar
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * 배송 알림 (앱을 닫아 둬도 정해진 시간에):
@@ -78,6 +80,24 @@ object DeliveryCheck {
             am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.timeInMillis, pi)
         }
         prefs(app).edit().putLong("next_at", next.timeInMillis).apply()
+    }
+
+    /** v1.8: 우체국 조회가 안 됐을 때 5분 뒤 한 번 더 (같은 시각 알림으로) */
+    fun scheduleRetry(ctx: Context, hour: Int, delayMs: Long = 5 * 60 * 1000L) {
+        val app = ctx.applicationContext
+        val am = app.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val i = Intent(app, DeliveryReceiver::class.java)
+        i.action = ACTION
+        i.putExtra("hour", hour)
+        i.putExtra("retry", true)
+        val pi = PendingIntent.getBroadcast(app, 2605, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val at = System.currentTimeMillis() + delayMs
+        try {
+            if (Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms()) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            else am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+        } catch (e: SecurityException) {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+        }
     }
 
     fun canExact(ctx: Context): Boolean {
@@ -154,35 +174,61 @@ object DeliveryCheck {
             } else {
                 val nos = groups.values.flatten().map { it.no }.distinct()
                 val st = queryEpost(app, nos)
+                // v1.8: 우체국 조회가 안 된 건(unknown)은 '도착 안 됨'으로 세지 않고 따로
+                fun isUnknown(no: String): Boolean { val s = st[no]; return s == null || s.state == "error" || s.state == "unknown" }
+                val unknownAll = nos.count { isUnknown(it) }
+                val pendingAll = nos.count { (st[it]?.state ?: "") != "delivered" }
+                val realLateAny = groups.any { (k, list) -> k.startsWith("late|") && list.any { !isUnknown(it.no) && st[it.no]?.state != "delivered" } }
+                val p = prefs(app)
+                val tries = if (p.getString("retry_key", "") == key) p.getInt("retry_n", 0) else 0
+                if (!manual && unknownAll > 0 && tries < 3 && (!realLateAny || unknownAll * 2 >= pendingAll)) {
+                    p.edit().putString("retry_key", key).putInt("retry_n", tries + 1).apply()
+                    scheduleRetry(app, hour)
+                    result = "우체국 조회가 안 된 ${unknownAll}건 → 5분 뒤 다시 확인 (${tries + 1}/3)"
+                    val c0 = Calendar.getInstance()
+                    p.edit().putString("last_result", "${c0.get(Calendar.MONTH) + 1}/${c0.get(Calendar.DAY_OF_MONTH)} ${c0.get(Calendar.HOUR_OF_DAY)}:${String.format("%02d", c0.get(Calendar.MINUTE))} — " + result).apply()
+                    return result
+                }
                 val lines = mutableListOf<String>()
                 var late = false
                 var lateCount = 0
+                var unknownCount = 0
                 for ((k, list) in groups) {
                     val kind = k.substringBefore("|")
                     val day = k.substringAfter("|")
                     val md = day.substring(5).replace("-", "/").trimStart('0').replace("/0", "/")
-                    val notYet = list.filter { (st[it.no]?.state ?: "unknown") != "delivered" }
-                    val done = list.size - notYet.size
+                    val unknown = list.filter { isUnknown(it.no) }
+                    val notYet = list.filter { !isUnknown(it.no) && st[it.no]?.state != "delivered" }
+                    val done = list.size - notYet.size - unknown.size
+                    unknownCount += unknown.size
                     if (kind == "late") {
-                        if (notYet.isEmpty()) continue
-                        late = true
-                        lateCount += notYet.size
-                        lines.add("🚨 $md 발송 · 아직 도착 안 됨 ${notYet.size}건")
-                        for (x in notYet) lines.add(" · ${x.name} …${x.no.takeLast(4)} ${st[x.no]?.last ?: ""}".trimEnd())
+                        if (notYet.isEmpty() && unknown.isEmpty()) continue
+                        if (notYet.isNotEmpty()) {
+                            late = true
+                            lateCount += notYet.size
+                            lines.add("🚨 $md 발송 · 아직 도착 안 됨 ${notYet.size}건")
+                            for (x in notYet) lines.add(" · ${x.name} …${x.no.takeLast(4)} ${st[x.no]?.last ?: ""}".trimEnd())
+                        }
                     } else {
-                        lines.add("$md 발송 ${list.size}건 · ✅ 배송완료 $done · 🚚 배송중 ${notYet.size}")
+                        lines.add("$md 발송 ${list.size}건 · ✅ 배송완료 $done · 🚚 배송중 ${notYet.size}" + (if (unknown.isNotEmpty()) " · ❔ ${unknown.size}" else ""))
                         for (x in notYet) lines.add(" · ${x.name} …${x.no.takeLast(4)} ${st[x.no]?.last ?: "배송중"}".trimEnd())
+                    }
+                    if (unknown.isNotEmpty()) {
+                        lines.add("❔ $md 발송 · 우체국 조회가 안 된 ${unknown.size}건 (도착 여부 모름)")
+                        lines.add(" · " + unknown.take(8).joinToString(", ") { "${it.name} …${it.no.takeLast(4)}" } + (if (unknown.size > 8) " 외 ${unknown.size - 8}건" else ""))
                     }
                 }
                 if (lines.isEmpty()) {
                     result = "모두 도착했어요 (알림 없음)"
                 } else {
-                    val title = if (late) "🚨 아직 도착 안 된 택배 ${lateCount}건" else "🚚 배송 현황 (" + (if (manual) "지금" else "${hour}시") + ")"
+                    val title = if (late) "🚨 아직 도착 안 된 택배 ${lateCount}건" + (if (unknownCount > 0) " (조회 안 됨 ${unknownCount}건)" else "")
+                        else if (groups.keys.any { it.startsWith("status|") }) "🚚 배송 현황 (" + (if (manual) "지금" else "${hour}시") + ")"
+                        else "❔ 우체국 배송 조회가 안 됐어요 (${unknownCount}건)"
                     notify(app, title, lines.joinToString("\n"), late)
                     result = title + "\n" + lines.joinToString("\n")
                 }
             }
-            if (!manual) prefs(app).edit().putString("done_key", key).apply()
+            if (!manual) prefs(app).edit().putString("done_key", key).putString("retry_key", "").apply()
         } catch (e: Exception) {
             result = "확인 실패: " + (e.message ?: e.toString()).take(120)
             if (!manual && hour == 9) notify(app, "⚠️ 배송 확인을 못 했어요", "인터넷 연결을 확인하고 주문관리 앱의 배송 현황을 열어 주세요.\n($result)", true)
@@ -230,20 +276,40 @@ object DeliveryCheck {
 
     // ---------- 우체국 조회 (주문관리 앱 서버 /api/epost) ----------
     fun queryEpost(ctx: Context, nos: List<String>): Map<String, Status> {
-        val out = HashMap<String, Status>()
+        // v1.8: 20개씩 보내면 서버가 시간 초과로 통째로 실패 → 4개씩 4개 동시에, 실패한 번호는 2개씩 한 번 더
+        val out = java.util.concurrent.ConcurrentHashMap<String, Status>()
         val base = Common.baseUrl(ctx)
-        for (part in nos.chunked(20)) {
-            try {
-                val j = JSONObject(http(base + "/api/epost?no=" + part.joinToString(","), "GET", null, null, null))
-                val res = j.optJSONArray("results") ?: continue
-                for (i in 0 until res.length()) {
-                    val r = res.getJSONObject(i)
-                    out[r.optString("no")] = Status(r.optString("state", "unknown"), r.optString("last", ""))
+        fun pass(parts: List<List<String>>) {
+            val ex = Executors.newFixedThreadPool(4)
+            for (part in parts) {
+                ex.execute {
+                    try {
+                        val j = JSONObject(http(base + "/api/epost?no=" + part.joinToString(","), "GET", null, null, null))
+                        val res = j.optJSONArray("results")
+                        if (res != null) {
+                            for (i in 0 until res.length()) {
+                                val r = res.getJSONObject(i)
+                                val no = r.optString("no")
+                                val stt = Status(r.optString("state", "unknown"), r.optString("last", ""))
+                                val prev = out[no]
+                                if (stt.state == "error" && prev != null && prev.state != "error") continue
+                                out[no] = stt
+                            }
+                        }
+                    } catch (e: Exception) {
+                    }
                 }
-            } catch (e: Exception) {
             }
+            ex.shutdown()
+            try { ex.awaitTermination(60, TimeUnit.SECONDS) } catch (e: Exception) {}
         }
-        return out
+        pass(nos.chunked(4))
+        val miss = nos.filter { out[it] == null || out[it]?.state == "error" }
+        if (miss.isNotEmpty()) {
+            try { Thread.sleep(1500) } catch (e: Exception) {}
+            pass(miss.chunked(2))
+        }
+        return HashMap(out)
     }
 
     private fun http(url: String, method: String, body: String?, type: String?, bearer: String?, referer: String? = null): String {
