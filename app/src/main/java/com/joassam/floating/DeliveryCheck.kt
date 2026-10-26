@@ -230,18 +230,71 @@ object DeliveryCheck {
             }
             if (!manual) prefs(app).edit().putString("done_key", key).putString("retry_key", "").apply()
         } catch (e: Exception) {
-            result = "확인 실패: " + (e.message ?: e.toString()).take(120)
-            if (!manual && hour == 9) notify(app, "⚠️ 배송 확인을 못 했어요", "인터넷 연결을 확인하고 주문관리 앱의 배송 현황을 열어 주세요.\n($result)", true)
+            val msg = e.message ?: e.toString()
+            if (msg.contains("PERMISSION_DENIED") || msg.contains("LOGIN_NEEDED")) {
+                result = "🔒 플로팅 앱 로그인이 필요해요 (주문관리와 같은 아이디·비밀번호)"
+                if (!manual && hour == 9) notify(app, "🔒 배송 알림: 로그인이 필요해요", "조아저씨쌈 플로팅 앱을 열고 주문관리 아이디·비밀번호로 로그인해 주세요.", true)
+            } else {
+                result = "확인 실패: " + msg.take(120)
+                if (!manual && hour == 9) notify(app, "⚠️ 배송 확인을 못 했어요", "인터넷 연결을 확인하고 주문관리 앱의 배송 현황을 열어 주세요.\n($result)", true)
+            }
         }
         val c = Calendar.getInstance()
         prefs(app).edit().putString("last_result", "${c.get(Calendar.MONTH) + 1}/${c.get(Calendar.DAY_OF_MONTH)} ${c.get(Calendar.HOUR_OF_DAY)}:${String.format("%02d", c.get(Calendar.MINUTE))} — " + result).apply()
         return result
     }
 
-    // ---------- 송장 목록 읽기 (Firebase 익명 로그인 → Firestore 문서) ----------
+    // ---------- v1.9 보안 로그인 (주문관리 앱과 같은 아이디·비밀번호) ----------
+    fun secureEmailOf(id: String): String {
+        val sb = StringBuilder("u")
+        for (x in id.trim().toByteArray(Charsets.UTF_8)) sb.append(String.format("%02x", x.toInt() and 0xff))
+        return sb.append("@joassam.app").toString()
+    }
+    fun securePwOf(id: String, pw: String): String = "jsm#" + pw.trim() + "#" + id.trim()
+
+    /** 성공하면 "" , 실패하면 이유(한글) */
+    fun login(ctx: Context, id: String, pw: String): String {
+        val app = ctx.applicationContext
+        if (id.trim().isEmpty()) return "아이디를 입력해 주세요"
+        return try {
+            fun q(x: String): String {
+                val sb = StringBuilder("\"")
+                for (ch in x) when {
+                    ch == '"' -> sb.append("\\\"")
+                    ch == '\\' -> sb.append("\\\\")
+                    ch.code < 0x20 -> sb.append(String.format("\\u%04x", ch.code))
+                    else -> sb.append(ch)
+                }
+                return sb.append("\"").toString()
+            }
+            val body = "{\"email\":" + q(secureEmailOf(id)) + ",\"password\":" + q(securePwOf(id, pw)) + ",\"returnSecureToken\":true}"
+            val j = JSONObject(http("$authBase/v1/accounts:signInWithPassword?key=$API_KEY", "POST", body, "application/json", null, Common.baseUrl(app) + "/"))
+            val rt = j.optString("refreshToken", "")
+            if (rt.isEmpty()) return "로그인하지 못했어요"
+            prefs(app).edit().putString("rt", rt).putString("rt_kind", "password").putString("sec_id", id.trim()).apply()
+            ""
+        } catch (e: Exception) {
+            val m = e.message ?: ""
+            when {
+                m.contains("OPERATION_NOT_ALLOWED") -> "Firebase에서 이메일/비밀번호 로그인이 아직 꺼져 있어요"
+                m.contains("INVALID") || m.contains("EMAIL_NOT_FOUND") || m.contains("PASSWORD") -> "아이디나 비밀번호가 맞지 않아요 (주문관리 앱에서 먼저 한 번 로그인해 주세요)"
+                m.contains("TOO_MANY") -> "너무 많이 시도했어요. 잠시 후 다시 해 주세요"
+                else -> "로그인 실패: " + m.take(80)
+            }
+        }
+    }
+    fun logout(ctx: Context) { prefs(ctx).edit().putString("rt", "").putString("rt_kind", "").putString("sec_id", "").apply() }
+    fun loginText(ctx: Context): String {
+        val p = prefs(ctx)
+        return if (p.getString("rt_kind", "") == "password") "로그인: " + (p.getString("sec_id", "") ?: "") + " ✓"
+        else "로그인 안 됨 — 보안 잠금을 켜면 로그인해야 배송 알림이 와요"
+    }
+
+    // ---------- 송장 목록 읽기 (로그인 토큰 → Firestore 문서) ----------
     private fun idToken(ctx: Context): String {
         val p = prefs(ctx)
         val rt = p.getString("rt", "") ?: ""
+        val isPw = p.getString("rt_kind", "") == "password"
         if (rt.isNotEmpty()) {
             try {
                 val body = "grant_type=refresh_token&refresh_token=" + URLEncoder.encode(rt, "UTF-8")
@@ -252,8 +305,14 @@ object DeliveryCheck {
                     return tok
                 }
             } catch (e: Exception) {
+                if (isPw) {
+                    val m = e.message ?: ""
+                    if (m.contains("HTTP 4")) { logout(ctx); throw Exception("LOGIN_NEEDED 로그인이 풀렸어요") }
+                    throw e
+                }
             }
         }
+        if (isPw) throw Exception("LOGIN_NEEDED")
         val j = JSONObject(http("$authBase/v1/accounts:signUp?key=$API_KEY", "POST", "{\"returnSecureToken\":true}", "application/json", null, Common.baseUrl(ctx) + "/"))
         p.edit().putString("rt", j.optString("refreshToken", "")).apply()
         return j.getString("idToken")

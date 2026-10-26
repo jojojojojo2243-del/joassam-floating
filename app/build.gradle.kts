@@ -16,7 +16,7 @@ android {
             ?: System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
             ?: 6
         versionCode = build
-        versionName = "1.8 (빌드 $build)"
+        versionName = "1.9 (빌드 $build)"
     }
 
     // 항상 같은 서명 → 새 버전을 덮어서 설치 가능 (매번 지우고 다시 깔 필요 없음)

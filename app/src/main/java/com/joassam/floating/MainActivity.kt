@@ -168,6 +168,38 @@ class MainActivity : Activity() {
         }
         showDlv()
         root.addView(dlvStatus)
+        // v1.9: 보안 로그인 (주문관리 앱과 같은 아이디·비밀번호)
+        val loginInfo = TextView(this)
+        loginInfo.textSize = 14f
+        loginInfo.setPadding(0, 16, 0, 0)
+        fun showLogin() {
+            loginInfo.text = DeliveryCheck.loginText(this)
+            loginInfo.setTextColor(if (DeliveryCheck.loginText(this).startsWith("로그인:")) Color.parseColor("#2F6F4E") else Color.parseColor("#C0392B"))
+        }
+        showLogin()
+        root.addView(loginInfo)
+        val idEdit = EditText(this)
+        idEdit.hint = "주문관리 아이디"
+        idEdit.isSingleLine = true
+        root.addView(idEdit)
+        val pwEdit = EditText(this)
+        pwEdit.hint = "비밀번호"
+        pwEdit.isSingleLine = true
+        pwEdit.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        root.addView(pwEdit)
+        root.addView(btn("로그인 (주문관리와 같은 아이디)", Color.parseColor("#2F6F4E")) {
+            val id = idEdit.text.toString()
+            val pw = pwEdit.text.toString()
+            loginInfo.text = "로그인 중…"
+            Thread {
+                val r = try { DeliveryCheck.login(this, id, pw) } catch (e: Exception) { "로그인 실패: " + e.message }
+                runOnUiThread {
+                    showLogin()
+                    pwEdit.setText("")
+                    Toast.makeText(this, if (r.isEmpty()) "로그인했어요" else r, Toast.LENGTH_LONG).show()
+                }
+            }.start()
+        })
         root.addView(btn("지금 배송 확인해 보기 (시험 알림)", Color.parseColor("#2F6F4E")) {
             dlvStatus.text = "확인 중…"
             Thread {
