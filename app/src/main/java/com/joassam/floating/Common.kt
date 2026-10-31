@@ -5,8 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 
 object Common {
@@ -38,33 +36,14 @@ object Common {
             .build()
     }
 
-    /** 주문관리 앱(PWA) 열기: 복사한 문자와 대화방 이름(주문자)을 넘김 */
+    /** v3.0: 플로팅에서 읽은 주문 문자를 이 앱(주문관리 화면)의 주문 등록 창으로 넘김 */
     fun openOrderApp(ctx: Context, text: String, sender: String, fromOcr: Boolean = false, senderPhone: String = "") {
-        val url = baseUrl(ctx) + "/?from=float" +
-            (if (senderPhone.isNotBlank()) "&senderPhone=" + Uri.encode(senderPhone) else "") +
-            (if (fromOcr) "&src=ocr" else "") +
-            "&text=" + Uri.encode(text) +
-            (if (sender.isNotBlank()) "&sender=" + Uri.encode(sender) else "")
-        val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        i.addCategory(Intent.CATEGORY_BROWSABLE)
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        // 폰에 설치된 '조아저씨쌈' 앱(홈 화면 앱)이 있으면 브라우저가 아니라 그 앱으로 바로 열기 → 로그인이 그대로 유지됨
-        try {
-            val found = ctx.packageManager.queryIntentActivities(i, PackageManager.MATCH_ALL)
-            for (r in found) {
-                val pkg = r.activityInfo.packageName
-                if (pkg.startsWith("org.chromium.webapk")) {
-                    i.setPackage(pkg)
-                    break
-                }
-            }
-        } catch (e: Exception) {
-        }
-        try {
-            ctx.startActivity(i)
-        } catch (e: Exception) {
-            i.setPackage(null)
-            ctx.startActivity(i)
-        }
+        val i = Intent(ctx, MainActivity::class.java)
+        i.putExtra(MainActivity.EXTRA_TEXT, text)
+        i.putExtra(MainActivity.EXTRA_SENDER, sender)
+        i.putExtra(MainActivity.EXTRA_PHONE, senderPhone)
+        i.putExtra(MainActivity.EXTRA_OCR, fromOcr)
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        ctx.startActivity(i)
     }
 }

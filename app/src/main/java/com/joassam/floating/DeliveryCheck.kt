@@ -32,7 +32,7 @@ object DeliveryCheck {
     private const val API_KEY = "AIzaSyBx1jLv2JoD2-MjXlkgoQNj6U1iCle9Hh0"
     private const val PROJECT = "joassam9288"
     private const val TRACK_DOC = "_track"
-    private val HOURS = intArrayOf(9, 12, 16)
+    private val HOURS = intArrayOf(9, 15)  // v2.0: 다음날 15시 = 배송중만, 그다음 날 9시 = 미도착만
     // 서버 주소 (시험할 때만 바꿈)
     var authBase = "https://identitytoolkit.googleapis.com"
     var tokenBase = "https://securetoken.googleapis.com"
@@ -135,14 +135,14 @@ object DeliveryCheck {
         return x
     }
 
-    /** 이 발송일이 오늘 이 시각에 알릴 대상인지: "status"(12·16시) / "late"(9시) / null */
+    /** 이 발송일이 오늘 이 시각에 알릴 대상인지: "status"(15시, 배송중만) / "late"(9시) / null */
     fun kindFor(shipDay: String, today: Calendar, hour: Int): String? {
         val d = parseDay(shipDay) ?: return null
         val a = nextDeliveryDay(d)
         val n = a.clone() as Calendar
         n.add(Calendar.DAY_OF_MONTH, 1)
         val t = ymd(today)
-        if ((hour == 12 || hour == 16) && ymd(a) == t) return "status"
+        if (hour == 15 && ymd(a) == t) return "status"
         if (hour == 9 && ymd(n) == t) return "late"
         return null
     }
@@ -210,8 +210,12 @@ object DeliveryCheck {
                             for (x in notYet) lines.add(" · ${x.name} …${x.no.takeLast(4)} ${st[x.no]?.last ?: ""}".trimEnd())
                         }
                     } else {
-                        lines.add("$md 발송 ${list.size}건 · ✅ 배송완료 $done · 🚚 배송중 ${notYet.size}" + (if (unknown.isNotEmpty()) " · ❔ ${unknown.size}" else ""))
-                        for (x in notYet) lines.add(" · ${x.name} …${x.no.takeLast(4)} ${st[x.no]?.last ?: "배송중"}".trimEnd())
+                        // v2.0: 배송완료된 것은 알리지 않고, 아직 배송중인 것만
+                        if (notYet.isEmpty() && unknown.isEmpty()) continue
+                        if (notYet.isNotEmpty()) {
+                            lines.add("🚚 $md 발송 · 아직 배송중 ${notYet.size}건" + (if (done > 0) " (배송완료 ${done}건 제외)" else ""))
+                            for (x in notYet) lines.add(" · ${x.name} …${x.no.takeLast(4)} ${st[x.no]?.last ?: "배송중"}".trimEnd())
+                        }
                     }
                     if (unknown.isNotEmpty()) {
                         lines.add("❔ $md 발송 · 우체국 조회가 안 된 ${unknown.size}건 (도착 여부 모름)")
@@ -222,7 +226,7 @@ object DeliveryCheck {
                     result = "모두 도착했어요 (알림 없음)"
                 } else {
                     val title = if (late) "🚨 아직 도착 안 된 택배 ${lateCount}건" + (if (unknownCount > 0) " (조회 안 됨 ${unknownCount}건)" else "")
-                        else if (groups.keys.any { it.startsWith("status|") }) "🚚 배송 현황 (" + (if (manual) "지금" else "${hour}시") + ")"
+                        else if (groups.keys.any { it.startsWith("status|") } && lines.any { it.startsWith("🚚") }) "🚚 아직 배송중인 택배 (" + (if (manual) "지금" else "${hour}시") + ")"
                         else "❔ 우체국 배송 조회가 안 됐어요 (${unknownCount}건)"
                     notify(app, title, lines.joinToString("\n"), late)
                     result = title + "\n" + lines.joinToString("\n")
@@ -233,7 +237,7 @@ object DeliveryCheck {
             val msg = e.message ?: e.toString()
             if (msg.contains("PERMISSION_DENIED") || msg.contains("LOGIN_NEEDED")) {
                 result = "🔒 플로팅 앱 로그인이 필요해요 (주문관리와 같은 아이디·비밀번호)"
-                if (!manual && hour == 9) notify(app, "🔒 배송 알림: 로그인이 필요해요", "조아저씨쌈 플로팅 앱을 열고 주문관리 아이디·비밀번호로 로그인해 주세요.", true)
+                if (!manual && hour == 9) notify(app, "🔒 배송 알림: 로그인이 필요해요", "조아저씨쌈 앱을 열고 로그인해 주세요.", true)
             } else {
                 result = "확인 실패: " + msg.take(120)
                 if (!manual && hour == 9) notify(app, "⚠️ 배송 확인을 못 했어요", "인터넷 연결을 확인하고 주문관리 앱의 배송 현황을 열어 주세요.\n($result)", true)
@@ -284,6 +288,14 @@ object DeliveryCheck {
         }
     }
     fun logout(ctx: Context) { prefs(ctx).edit().putString("rt", "").putString("rt_kind", "").putString("sec_id", "").apply() }
+    /** v3.0: 주문관리 화면에서 로그인한 그 계정(갱신 토큰)을 그대로 씀 — 비밀번호는 앱에 저장하지 않음 */
+    fun setToken(ctx: Context, refreshToken: String, id: String) {
+        val rt = refreshToken.trim()
+        if (rt.length < 20) return
+        val p = prefs(ctx.applicationContext)
+        if (p.getString("rt", "") == rt && p.getString("sec_id", "") == id.trim()) return
+        p.edit().putString("rt", rt).putString("rt_kind", "password").putString("sec_id", id.trim()).apply()
+    }
     fun loginText(ctx: Context): String {
         val p = prefs(ctx)
         return if (p.getString("rt_kind", "") == "password") "로그인: " + (p.getString("sec_id", "") ?: "") + " ✓"
@@ -400,8 +412,10 @@ object DeliveryCheck {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(CHANNEL) == null) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "배송 알림", NotificationManager.IMPORTANCE_HIGH))
         }
-        val open = Intent(Intent.ACTION_VIEW, Uri.parse(Common.baseUrl(ctx) + "/?from=dlv"))
-        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // v3.0: 알림을 누르면 이 앱의 '배송' 탭으로
+        val open = Intent(ctx, MainActivity::class.java)
+        open.putExtra(MainActivity.EXTRA_TAB, "ship")
+        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val pi = PendingIntent.getActivity(ctx, 2602, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val n: Notification = Notification.Builder(ctx, CHANNEL)
             .setContentTitle(title)
