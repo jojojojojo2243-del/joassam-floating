@@ -49,6 +49,8 @@ class MainActivity : Activity() {
         const val EXTRA_PHONE = "joassam_phone"
         const val EXTRA_OCR = "joassam_ocr"
         const val EXTRA_TAB = "joassam_tab"
+        /** 지금 앱 화면을 보고 있는지 (자동 업데이트가 일하는 중에 앱을 닫지 않게) */
+        @Volatile var visible = false
         private const val REQ_FILE = 9101
         private const val REQ_MIC = 9102
         private const val REQ_STORAGE = 9103
@@ -89,6 +91,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try { DeliveryCheck.schedule(this) } catch (e: Exception) {}
+        try { Updater.scheduleAuto(this) } catch (e: Exception) {}
         if (!Updater.triedRecently(this) && Updater.installIfReady(this)) {
             Toast.makeText(this, "새 버전으로 업데이트 중이에요", Toast.LENGTH_LONG).show()
         } else {
@@ -135,6 +138,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        visible = true
         web.onResume()
         if (pendingFloat && Settings.canDrawOverlays(this)) {
             pendingFloat = false
@@ -143,6 +147,7 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        visible = false
         web.onPause()
         super.onPause()
     }

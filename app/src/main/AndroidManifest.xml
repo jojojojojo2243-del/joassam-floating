@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- v3.1: 안드로이드 12 이상에서 새 버전을 확인 창 없이 조용히 설치 (이 앱이 설치한 앱의 업데이트만) -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 배송 알림: 정해진 시간(9·12·16시)에 정확히 깨우기 + 재부팅 뒤 다시 예약 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />

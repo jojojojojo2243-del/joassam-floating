@@ -1,5 +1,6 @@
 package com.joassam.floating
 
+import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -39,7 +40,14 @@ object Updater {
         val app = ctx.applicationContext
         val p = prefs(app)
         if (!force && System.currentTimeMillis() - p.getLong("last_check", 0) < 60 * 60 * 1000) { onDone?.invoke(""); return }
-        Thread {
+        Thread { onDone?.invoke(checkSync(app)) }.start()
+    }
+
+    /** 확인·내려받기를 지금 이 스레드에서 (알람에서 씀) */
+    fun checkSync(ctx: Context): String {
+        val app = ctx.applicationContext
+        val p = prefs(app)
+        run {
             var msg = ""
             try {
                 p.edit().putLong("last_check", System.currentTimeMillis()).apply()
@@ -80,8 +88,35 @@ object Updater {
             } catch (e: Exception) {
                 msg = "업데이트 확인 실패: " + (e.message ?: "인터넷을 확인해 주세요")
             }
-            onDone?.invoke(msg)
-        }.start()
+            return msg
+        }
+    }
+
+    // ---------- v3.1 자동 업데이트: 관리자가 새 버전을 올리면 폰이 알아서 받아 조용히 설치 ----------
+    const val ACTION_UPDATE = "com.joassam.floating.UPDATE"
+
+    /** 2시간마다 확인 알람 (정확할 필요 없음 → 배터리 부담 적음) */
+    fun scheduleAuto(ctx: Context, force: Boolean = false) {
+        val app = ctx.applicationContext
+        val am = app.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val i = Intent(app, DeliveryReceiver::class.java)
+        i.action = ACTION_UPDATE
+        // 이미 예약돼 있으면 그대로 둠 (앱을 열 때마다 2시간씩 밀리지 않게)
+        if (!force && PendingIntent.getBroadcast(app, 2701, i, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE) != null) return
+        val pi = PendingIntent.getBroadcast(app, 2701, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        try { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 2 * 60 * 60 * 1000L, pi) } catch (e: Exception) {}
+    }
+
+    /** 지금 설치해도 되는 때인지: 앱 화면을 보고 있지 않고, 플로팅으로 주문을 받는 중이 아닐 때 (밤 0~6시는 플로팅이 켜져 있어도 설치) */
+    fun quietNow(hour: Int, appVisible: Boolean, bubbleOn: Boolean): Boolean =
+        !appVisible && (!bubbleOn || hour in 0..5)
+
+    /** 알람에서: 확인 → 받기 → 조용할 때 설치 */
+    fun autoRun(ctx: Context) {
+        val app = ctx.applicationContext
+        try { checkSync(app) } catch (e: Exception) {}
+        val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        if (readyCode(app) > 0L && quietNow(h, MainActivity.visible, BubbleService.instance != null)) installIfReady(app)
     }
 
     /** 방금(30분 안에) 설치를 시도했으면 true → 같은 확인 창이 계속 뜨지 않게 */

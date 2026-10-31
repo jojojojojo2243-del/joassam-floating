@@ -8,8 +8,21 @@ import android.content.Intent
 class DeliveryReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext
+        if (intent.action == Updater.ACTION_UPDATE) {
+            // v3.1: 새 버전 자동 확인·설치 (2시간마다)
+            val pend = goAsync()
+            Thread {
+                try { Updater.autoRun(app) } catch (e: Exception) {
+                } finally {
+                    try { Updater.scheduleAuto(app, true) } catch (e: Exception) {}
+                    pend.finish()
+                }
+            }.start()
+            return
+        }
         if (intent.action != DeliveryCheck.ACTION) {
             DeliveryCheck.schedule(app)
+            try { Updater.scheduleAuto(app, true) } catch (e: Exception) {}
             return
         }
         val hour = intent.getIntExtra("hour", -1)
