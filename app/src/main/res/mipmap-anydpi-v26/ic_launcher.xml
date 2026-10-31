@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v3.0: 조아저씨쌈 로고 아이콘 (안드로이드 8 이상: 폰 모양에 맞춰 둥글게/네모로 잘림) -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@android:color/white" />
+    <foreground android:drawable="@mipmap/ic_launcher_fg" />
+</adaptive-icon>
