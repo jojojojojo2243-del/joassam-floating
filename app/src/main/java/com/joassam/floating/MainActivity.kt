@@ -9,6 +9,7 @@ import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -34,6 +35,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import java.io.File
 import java.io.FileOutputStream
 
@@ -416,6 +420,9 @@ class MainActivity : Activity() {
             i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, speechLang)
             i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, speechInterim)
             i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, speechMax)
+            // v3.2: 차 안처럼 시끄러운 곳에서 말을 잠깐 멈춰도 끊지 않게 조금 더 기다림 (지원하는 폰에서만 적용)
+            i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+            i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
             r.startListening(i)
         } catch (e: Exception) {
             emitSpeech(id, "error", "{\"error\":\"audio-capture\"}")
@@ -480,11 +487,54 @@ class MainActivity : Activity() {
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
+    // ------------------------------------------------------------------ v3.2 사진 글자 읽기
+
+    private fun emitOcr(id: Int, text: String?, err: String?) {
+        runOnUiThread { try { web.evaluateJavascript(AppLogic.ocrJs(id, text, err), null) } catch (e: Exception) {} }
+    }
+
+    private fun runOcr(id: Int, base64: String) {
+        Thread {
+            try {
+                val clean = if (base64.contains("base64,")) base64.substringAfter("base64,") else base64
+                val bytes = Base64.decode(clean, Base64.DEFAULT)
+                val src = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (src == null) { emitOcr(id, "", "decode"); return@Thread }
+                val sc = AppLogic.ocrScale(src.width, src.height)
+                val bmp = if (sc != 1f) Bitmap.createScaledBitmap(src, (src.width * sc).toInt().coerceAtLeast(1), (src.height * sc).toInt().coerceAtLeast(1), true) else src
+                val recognizer = TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
+                recognizer.process(InputImage.fromBitmap(bmp, 0))
+                    .addOnSuccessListener { t ->
+                        val lines = ArrayList<AppLogic.OcrLine>()
+                        for (block in t.textBlocks) for (line in block.lines) {
+                            val b = line.boundingBox
+                            if (b != null) lines.add(AppLogic.OcrLine(b.top, b.bottom, b.left, line.text))
+                            else lines.add(AppLogic.OcrLine(Int.MAX_VALUE / 2, Int.MAX_VALUE / 2, 0, line.text))
+                        }
+                        val text = if (lines.isEmpty()) t.text else AppLogic.joinOcrLines(lines)
+                        emitOcr(id, text, null)
+                        try { recognizer.close() } catch (e: Exception) {}
+                    }
+                    .addOnFailureListener { e ->
+                        emitOcr(id, "", e.message ?: "fail")
+                        try { recognizer.close() } catch (x: Exception) {}
+                    }
+            } catch (e: OutOfMemoryError) {
+                emitOcr(id, "", "memory")
+            } catch (e: Exception) {
+                emitOcr(id, "", e.message ?: "fail")
+            }
+        }.start()
+    }
+
     // ------------------------------------------------------------------ 화면(웹)과 이어 주는 창구
 
     private inner class Bridge {
         @JavascriptInterface fun isApp(): Boolean = true
-        @JavascriptInterface fun appVersion(): String = "3.0 (" + Updater.currentCode(this@MainActivity) + ")"
+        @JavascriptInterface fun appVersion(): String = "3.2 (" + Updater.currentCode(this@MainActivity) + ")"
+        /** v3.2: 사진·명함·손글씨 글자 읽기 — 구글 한글 인식(폰 안에서, 무료, 인터넷 필요 없음). 결과는 window.__joassamOcrDone(id, 글자, 오류)로 */
+        @JavascriptInterface fun hasOcr(): Boolean = true
+        @JavascriptInterface fun ocrImage(id: Int, base64: String?) { runOcr(id, base64 ?: "") }
         @JavascriptInterface fun startFloating() { runOnUiThread { this@MainActivity.startFloating() } }
         @JavascriptInterface fun stopFloating() { runOnUiThread { stopService(Intent(this@MainActivity, BubbleService::class.java)) } }
         @JavascriptInterface fun openSettings() { runOnUiThread { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) } }

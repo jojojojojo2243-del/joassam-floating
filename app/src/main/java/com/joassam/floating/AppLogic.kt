@@ -124,4 +124,37 @@ object AppLogic {
         if (!Regex("^[a-z]{2,20}$").matches(tab)) return null
         return "window.__joassamOpenTab&&window.__joassamOpenTab(" + js(tab) + ")"
     }
+
+    /** v3.2: 사진 글자 인식 결과 한 줄 (위치 포함) */
+    data class OcrLine(val top: Int, val bottom: Int, val left: Int, val text: String)
+
+    /** v3.2: 인식된 줄을 사람이 읽는 순서로 — 위에서 아래로, 같은 높이(같은 줄)면 왼쪽에서 오른쪽으로 이어 붙임 (명함처럼 칸이 나뉜 글도) */
+    fun joinOcrLines(lines: List<OcrLine>): String {
+        val sorted = lines.filter { it.text.isNotBlank() }.sortedWith(compareBy<OcrLine>({ it.top }, { it.left }))
+        val rows = ArrayList<MutableList<OcrLine>>()
+        for (l in sorted) {
+            val row = rows.lastOrNull()
+            if (row != null) {
+                val ref = row[0]
+                val mid = (l.top + l.bottom) / 2
+                val refH = (ref.bottom - ref.top).coerceAtLeast(1)
+                if (mid >= ref.top && mid <= ref.bottom && (l.bottom - l.top) < refH * 2) { row.add(l); continue }
+            }
+            rows.add(mutableListOf(l))
+        }
+        return rows.joinToString("\n") { r -> r.sortedBy { it.left }.joinToString("  ") { it.text.trim() } }
+    }
+
+    /** v3.2: 글자 인식 결과를 화면(웹)에 돌려주는 자바스크립트 */
+    fun ocrJs(id: Int, text: String?, err: String?): String =
+        "window.__joassamOcrDone&&window.__joassamOcrDone(" + id + "," + js(text ?: "") + "," + js(err ?: "") + ")"
+
+    /** v3.2: 인식하기 좋은 크기 — 긴 변이 너무 크면 줄이고(메모리), 너무 작으면 키움(작은 글씨) */
+    fun ocrScale(w: Int, h: Int): Float {
+        val long = maxOf(w, h)
+        if (long <= 0) return 1f
+        if (long > 2400) return 2400f / long
+        if (long < 1000) return 1000f / long
+        return 1f
+    }
 }
